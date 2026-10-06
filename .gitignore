@@ -1,0 +1,24 @@
+# Compiled native helper
+native-host/abes-wifi-helper.exe
+*.exe
+
+# Local Go/tool binary that may have been bundled accidentally
+native-host/go
+
+# Old text README
+README.txt
+
+# Windows files
+Thumbs.db
+desktop.ini
+
+# Editor/IDE files
+.vscode/
+.idea/
+
+# Temporary files
+*.tmp
+*.temp
+
+# Logs
+*.log

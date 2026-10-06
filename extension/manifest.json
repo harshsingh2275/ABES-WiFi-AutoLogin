@@ -1,0 +1,36 @@
+{
+  "manifest_version": 3,
+  "name": "ABES WiFi Auto Login",
+  "version": "4.2.0",
+  "description": "Automatically logs in to the ABES-EC Internet Service Portal only while the configured college Wi-Fi is active.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAtms4Otk3AH9hu5XXHXNQRrWk+c4qrT4IQ2t9Qx9YYnDMlK61TeB8qZANwK+p+qA1DSK+yN+nrZaGR3fQ+xomxGFwJ13vPcZIDhNHEIb+MZFFdA8LGaoCE2hQvXYcW3e+p242OR9ACw/8h2OUFeXRUmYYo+qMXJ0+y1YISkN6RJZ6lG67QnwpGoNO+7Sxphb3MLGSAS4pjQuR17rjPgF5uCDA46Xa8YHo+ZA8dn1ykWqR7qgZIHg0w8KUDsVpyv4+Po/rf8tAmDKInqn19jtwfDOx9aV/8oKMDTwwv1jM5Xkb+6iJJad4sYRobcjUz/aWZvJPtBgOei2jG2D0R1aUNwIDAQAB",
+  "permissions": [
+    "storage",
+    "tabs",
+    "scripting",
+    "alarms",
+    "nativeMessaging"
+  ],
+  "host_permissions": [
+    "https://192.168.1.254:8090/*",
+    "https://www.abes.ac.in/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "ABES WiFi Auto Login"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://192.168.1.254:8090/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}

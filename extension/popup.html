@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ABES WiFi Auto Login</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <main class="container">
+    <h1>ABES WiFi Auto Login</h1>
+
+    <div id="networkStatus" class="network-status">Checking Wi-Fi...</div>
+
+    <label for="targetSSID">College Wi-Fi SSID</label>
+    <input id="targetSSID" type="text" value="ABESEC" placeholder="e.g. ABESEC">
+
+    <label>Detection Mode</label>
+    <div class="mode-card">
+      <label class="mode-option">
+        <input id="realtimeMode" name="detectionMode" type="radio" value="realtime">
+        <span>
+          <strong>Real-Time</strong>
+          <small>Instant Wi-Fi change detection. A lightweight helper listens for Windows Wi-Fi events.</small>
+        </span>
+      </label>
+
+      <label class="mode-option">
+        <input id="batteryMode" name="detectionMode" type="radio" value="battery">
+        <span>
+          <strong>Battery Saver</strong>
+          <small>The helper runs only when the popup or the reconnect timer needs a Wi-Fi check.</small>
+        </span>
+      </label>
+    </div>
+
+    <label for="username">Username</label>
+    <input id="username" type="text" autocomplete="username" placeholder="College username">
+
+    <label for="password">Password</label>
+    <input id="password" type="password" autocomplete="current-password" placeholder="College password">
+
+    <div class="row">
+      <label class="switch-label" for="autoReconnect">Auto Reconnect</label>
+      <input id="autoReconnect" type="checkbox">
+    </div>
+
+    <label for="intervalValue">Reconnect every</label>
+    <div class="interval-row">
+      <input id="intervalValue" type="number" min="1" step="1" value="2">
+      <select id="intervalUnit">
+        <option value="minutes">Minutes</option>
+        <option value="hours" selected>Hours</option>
+      </select>
+    </div>
+
+    <button id="save">Save Settings</button>
+    <button id="connect">Connect Now</button>
+
+    <p id="nextRun">Auto reconnect is off or sleeping</p>
+    <p id="status"></p>
+  </main>
+  <script src="popup.js"></script>
+</body>
+</html>
