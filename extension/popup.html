@@ -8,57 +8,56 @@
 </head>
 <body>
   <main class="container">
-    <h1>ABES WiFi Auto Login</h1>
+    <header class="header">
+      <h1>ABES WiFi Auto Login</h1>
+      <div id="networkStatus" class="network-status checking">Checking Wi-Fi...</div>
+    </header>
 
-    <div id="networkStatus" class="network-status">Checking Wi-Fi...</div>
+    <section class="card">
+      <div class="field">
+        <label for="targetSSID">College Wi-Fi SSID</label>
+        <input id="targetSSID" type="text" value="ABESEC" placeholder="e.g. ABESEC">
+      </div>
 
-    <label for="targetSSID">College Wi-Fi SSID</label>
-    <input id="targetSSID" type="text" value="ABESEC" placeholder="e.g. ABESEC">
+      <div class="field">
+        <label for="username">Username</label>
+        <input id="username" type="text" autocomplete="username" placeholder="College username">
+      </div>
 
-    <label>Detection Mode</label>
-    <div class="mode-card">
-      <label class="mode-option">
-        <input id="realtimeMode" name="detectionMode" type="radio" value="realtime">
-        <span>
-          <strong>Real-Time</strong>
-          <small>Instant Wi-Fi change detection. A lightweight helper listens for Windows Wi-Fi events.</small>
-        </span>
-      </label>
+      <div class="field">
+        <label for="password">Password</label>
+        <input id="password" type="password" autocomplete="current-password" placeholder="College password">
+      </div>
+    </section>
 
-      <label class="mode-option">
-        <input id="batteryMode" name="detectionMode" type="radio" value="battery">
-        <span>
-          <strong>Battery Saver</strong>
-          <small>The helper runs only when the popup or the reconnect timer needs a Wi-Fi check.</small>
-        </span>
-      </label>
+    <section class="card">
+      <div class="row">
+        <div class="row-text">
+          <label class="switch-label" for="autoReconnect">Auto Reconnect</label>
+          <span class="hint">Signs in again on a timer</span>
+        </div>
+        <input id="autoReconnect" class="switch" type="checkbox">
+      </div>
+
+      <div class="field">
+        <label for="intervalValue">Reconnect every</label>
+        <div class="interval-row">
+          <input id="intervalValue" type="number" min="1" step="1" value="2">
+          <select id="intervalUnit">
+            <option value="minutes">Minutes</option>
+            <option value="hours" selected>Hours</option>
+          </select>
+        </div>
+      </div>
+    </section>
+
+    <div class="actions">
+      <button id="save" type="button">Save Settings</button>
+      <button id="connect" type="button">Connect Now</button>
     </div>
-
-    <label for="username">Username</label>
-    <input id="username" type="text" autocomplete="username" placeholder="College username">
-
-    <label for="password">Password</label>
-    <input id="password" type="password" autocomplete="current-password" placeholder="College password">
-
-    <div class="row">
-      <label class="switch-label" for="autoReconnect">Auto Reconnect</label>
-      <input id="autoReconnect" type="checkbox">
-    </div>
-
-    <label for="intervalValue">Reconnect every</label>
-    <div class="interval-row">
-      <input id="intervalValue" type="number" min="1" step="1" value="2">
-      <select id="intervalUnit">
-        <option value="minutes">Minutes</option>
-        <option value="hours" selected>Hours</option>
-      </select>
-    </div>
-
-    <button id="save">Save Settings</button>
-    <button id="connect">Connect Now</button>
 
     <p id="nextRun">Auto reconnect is off or sleeping</p>
-    <p id="status"></p>
+    <p id="status" role="status" aria-live="polite"></p>
   </main>
   <script src="popup.js"></script>
 </body>

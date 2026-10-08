@@ -1,26 +1,50 @@
 # ABES WiFi Auto Login
 
-> Automatically re-login to the ABES-EC college Wi-Fi captive portal without manually entering your credentials every 1–2 hours.
+> Automatically re-login to the ABES-EC college Wi-Fi captive portal, so you never have to type your credentials again every 1–2 hours.
 
-![Platform](https://img.shields.io/badge/Platform-Windows-0078D4?logo=windows)
-![Browser](https://img.shields.io/badge/Browser-Chrome%20%2F%20Brave-4285F4)
-![Version](https://img.shields.io/badge/Version-v4.2-green)
+![Version](https://img.shields.io/badge/Version-v4.3.0-green)
+![Browser](https://img.shields.io/badge/Browser-Chrome%20%2F%20Brave%20%2F%20Edge-4285F4)
+![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)
+![Installer](https://img.shields.io/badge/Installer-Not%20needed-success)
 ![Status](https://img.shields.io/badge/Status-Beta-orange)
+![License](https://img.shields.io/badge/License-MIT-blue)
+
+**v4.3.0 is a browser-only extension.** There is no `install.bat`, no Go, no helper `.exe`, and nothing to build. Download the ZIP, load it in your browser, enter your credentials, done.
+
+---
+
+## Table of contents
+
+- [Why does this exist?](#why-does-this-exist)
+- [What it does](#what-it-does)
+- [How it works](#how-it-works)
+- [What's new in v4.3.0](#whats-new-in-v430)
+- [Requirements](#requirements)
+- [Installation](#installation)
+- [Using the extension](#using-the-extension)
+- [Updating](#updating)
+- [Privacy and security](#privacy-and-security)
+- [Troubleshooting](#troubleshooting)
+- [Project structure](#project-structure)
+- [Technical details](#technical-details)
+- [Known limitations](#known-limitations)
+- [Contributing](#contributing)
+- [License](#license)
+
+---
 
 ## Why does this exist?
 
-At ABES Engineering College, the Wi-Fi connection can require you to authenticate again after a limited session.
-
-The usual workflow looks like this:
+At ABES Engineering College, the Wi-Fi asks you to authenticate again after a limited session. The usual routine looks like this:
 
 ```text
 Connect to ABESEC
        ↓
-Use internet
+Use the internet
        ↓
 Session expires
        ↓
-Open college login page
+Open the college login page
        ↓
 Enter username + password
        ↓
@@ -29,622 +53,383 @@ Click "Sign in"
 Internet works again
 ```
 
-Doing this manually every time is annoying, especially during classes, coding sessions, labs, or study hours.
-
-**ABES WiFi Auto Login** automates that repetitive process.
+Doing this by hand every time is annoying, especially during classes, labs, coding sessions and study hours. **ABES WiFi Auto Login** does that repetitive part for you.
 
 ---
 
 ## What it does
 
-Once configured, the extension can:
+Once configured, the extension:
 
-- Automatically open the ABES captive portal in a background tab.
-- Fill in your username and password.
-- Click **Sign in**.
-- Detect successful authentication.
-- Close the login tab automatically.
-- Reconnect on a user-defined schedule.
-- Pause automatic login when you are connected to another Wi-Fi network.
-- Resume the timer when you reconnect to the configured college Wi-Fi.
-- Support two detection modes:
-  - **Real-Time:** reacts to Wi-Fi changes using a lightweight native helper.
-  - **Battery Saver:** checks the Wi-Fi only when the popup or reconnect timer needs it.
-- Refresh the displayed Wi-Fi status when the extension popup is opened.
+- Opens the ABES captive portal in a **background tab**.
+- Fills in your username and password and clicks **Sign in**.
+- Detects the successful login and **closes the tab** automatically.
+- Repeats the login on a **schedule you choose** (for example every 2 hours).
+- **Sleeps automatically** when you are on another network (home Wi-Fi, mobile hotspot) and **resumes by itself** once you are back on the college Wi-Fi.
+- Shows live status in the popup: checking, active, or sleep mode.
+- Has a **Connect Now** button for an immediate login.
 
-### In simple terms
+---
+
+## How it works
+
+### The big picture
 
 ```mermaid
 flowchart TD
-    A[Connect to ABESEC] --> B[Extension detects college Wi-Fi]
-    B --> C[Auto Reconnect timer starts]
-    C --> D[Timer fires]
-    D --> E[Open ABES captive portal]
-    E --> F[Fill credentials]
-    F --> G[Click Sign in]
-    G --> H[Login succeeds]
-    H --> I[Close login tab]
-    I --> C
-
-    J[Switch to another Wi-Fi] --> K[Extension enters Sleep Mode]
-    K --> L[Timer is stopped]
-    L --> M[Reconnect to ABESEC]
-    M --> B
+    A["Timer fires (every X minutes or hours)"] --> B["Probe the portal over HTTP"]
+    B --> C{"Portal answered?"}
+    C -->|"Yes: on college Wi-Fi"| D["Open login tab in the background"]
+    D --> E["Fill username and password"]
+    E --> F["Click Sign in"]
+    F --> G{"Signed-in message shown?"}
+    G -->|Yes| H["Close the login tab and reset the timer"]
+    G -->|"No, tab stuck"| I["Stuck tab is closed on the next attempt"]
+    C -->|"No: other network"| J["Skip this round, keep the timer running"]
+    H --> A
+    I --> A
+    J --> A
 ```
 
+### How the extension knows you are on the college Wi-Fi
+
+Earlier versions asked Windows for the Wi-Fi name through a native helper. v4.3.0 does not need that. It simply asks: **"Can I reach the ABES login portal?"**
+
+```mermaid
+flowchart LR
+    S["Popup opens, timer fires, or settings are saved"] --> P1["Attempt 1: HTTP request, 12 s timeout"]
+    P1 -->|"portal answers"| ACTIVE["ACTIVE"]
+    P1 -->|"no answer"| W["Wait 2 s"]
+    W --> P2["Attempt 2: HTTP request, 12 s timeout"]
+    P2 -->|"portal answers"| ACTIVE
+    P2 -->|"no answer"| SLEEP["SLEEP MODE"]
+```
+
+The portal can be slow to respond, so the extension **never concludes "not on college Wi-Fi" from a single failed attempt**. It only goes to sleep mode after every attempt has failed.
+
+The request carries no username or password, and the extension does not read the portal's reply. It only checks that a reply came back.
+
+### What happens during a login
+
+```mermaid
+sequenceDiagram
+    participant T as Alarm
+    participant B as Background worker
+    participant P as ABES portal
+    participant C as Content script
+    T->>B: Timer fires
+    B->>P: HTTP probe
+    P-->>B: Any response
+    B->>P: Open https://192.168.1.254:8090/ in a background tab
+    C->>C: Read saved credentials and fill the form
+    C->>B: submitLogin
+    B->>P: Run the portal's own submitRequest()
+    P-->>C: Page shows "You are signed in"
+    C->>B: loginSuccess
+    B->>B: Close the tab and reset the timer
+```
+
+### Popup status
+
+```mermaid
+stateDiagram-v2
+    [*] --> Checking
+    Checking --> Active: portal answers
+    Checking --> Sleep: no answer after 2 attempts
+    Active --> Checking: re-check every 10 s while the popup is open
+    Sleep --> Checking: re-check every 10 s while the popup is open
+```
+
+While the popup is open it re-checks every 10 seconds and also reacts immediately when your browser goes online or offline. When the popup is closed, nothing polls in the background. The only background activity is the reconnect timer you configured.
+
 ---
 
-# Features
+## What's new in v4.3.0
 
-| Feature | V4.2 |
-|---|:---:|
-| Automatic portal login | ✅ |
-| Background login tab | ✅ |
-| Automatic tab cleanup | ✅ |
-| Configurable reconnect interval | ✅ |
-| Real-Time Wi-Fi detection | ✅ |
-| Battery Saver Wi-Fi detection | ✅ |
-| Sleep mode on other Wi-Fi | ✅ |
-| Automatic resume on ABESEC | ✅ |
-| Fresh status when popup opens | ✅ |
-| ABES-specific default setup | ✅ |
-| Windows native helper | ✅ |
-
----
-
-# Requirements
-
-You need:
-
-- **Windows 10 or Windows 11**
-- **Google Chrome or Brave**
-- Access to the **ABESEC** Wi-Fi network
-- A college Wi-Fi account that can authenticate through the ABES portal
-- Internet access to download the project and Go during setup
-
-The current project is **Windows-specific** because the Wi-Fi detection helper uses Windows WLAN APIs.
+| | v4.2 | v4.3.0 |
+|---|---|---|
+| Installer (`install.bat`) | Required | **Not needed** |
+| Go toolchain | Required | **Not needed** |
+| Windows native helper (`.exe`) | Required | **Not needed** |
+| Windows Defender / Smart App Control blocks | Common on other laptops | **Gone** (nothing to block) |
+| Install steps | 8+ | **Download, extract, Load unpacked** |
+| Operating systems | Windows only | **Windows, macOS, Linux** (see [Requirements](#requirements)) |
+| Wi-Fi detection | Windows WLAN events | **Portal reachability check** |
+| Real-Time / Battery Saver modes | Yes | **Removed** (no longer needed) |
+| Timer away from college Wi-Fi | Stopped | **Keeps running, skips the round, resumes automatically** |
+| Stuck login tab | Could block later logins | **Closed automatically after 90 s** |
+| Popup status | Updated when opened | **Also refreshes by itself while open** |
+| Popup design | Basic | **Refreshed** |
 
 ---
 
-# Installation
+## Requirements
 
-## Recommended method
+- A **Chromium-based browser**: Google Chrome or Brave (both tested), or Microsoft Edge and other Chromium browsers (should work).
+- Access to the **ABESEC** Wi-Fi network.
+- A college Wi-Fi account that can sign in through the ABES portal.
 
-The repository contains the Chrome/Brave extension source and the Windows native helper source.
+| Operating system | Status |
+|---|---|
+| Windows 10 / 11 | Tested |
+| macOS | Tested |
+| Linux | Tested |
 
-The native helper is built **locally on your computer** from `main.go`.
+Firefox and Safari are **not supported**.
 
-This means you do not need to download a precompiled helper executable from the project.
+---
 
-### 1. Download the repository
+## Installation
 
-On GitHub:
+### 1. Download the extension
 
-**Code → Download ZIP**
+Go to the [**Releases** page](https://github.com/harshsingh2275/ABES-WiFi-AutoLogin/releases) and download **`ABES-WiFi-AutoLogin-v4.3.0.zip`** from the latest release.
 
-Extract it somewhere permanent.
+> Use the ZIP attached to the release. You do not need the repository's "Download ZIP" button.
 
-For example:
+### 2. Extract it to a permanent folder
+
+Extract the ZIP somewhere it can stay, for example:
 
 ```text
-D:\ABES WiFi Login\ABES-WiFi-AutoLogin
+D:\ABES WiFi Login\extension
 ```
 
-Do not repeatedly move the folder after installation.
+The extracted folder must directly contain `manifest.json`:
+
+```text
+extension/
+├── manifest.json
+├── background.js
+├── content.js
+├── popup.html
+├── popup.js
+└── popup.css
+```
+
+> **Do not move or rename this folder after installing.** Browsers tie an unpacked extension to its folder location. Moving it makes the browser treat it as a new extension and your saved settings are lost.
+
+### 3. Load it in your browser
+
+| Browser | Extensions page |
+|---|---|
+| Brave | `brave://extensions/` |
+| Chrome | `chrome://extensions/` |
+| Edge | `edge://extensions/` |
+
+1. Turn on **Developer mode** (top right).
+2. Click **Load unpacked**.
+3. Select the folder that contains `manifest.json`.
+
+The extension should now appear in your list. Pin it from the puzzle-piece icon so it is one click away.
+
+### 4. Configure it
+
+Open the popup, enter your **username** and **password**, and click **Save Settings**. That is all.
 
 ---
 
-### 2. Check the project structure
+## Using the extension
 
-You should have:
+### Popup fields
+
+| Field | What it does |
+|---|---|
+| **College Wi-Fi SSID** | The network name shown in the status bar (default `ABESEC`). In this version it is **informational only** and does not affect detection. Leave it as `ABESEC`. |
+| **Username** | Your college Wi-Fi username. |
+| **Password** | Your college Wi-Fi password. |
+| **Auto Reconnect** | Turns the scheduled re-login on or off. |
+| **Reconnect every** | How often to log in again, in minutes or hours. The default is 2 hours. |
+| **Save Settings** | Saves everything and re-checks the network. |
+| **Connect Now** | Starts a login immediately, in a background tab. |
+
+### Status bar
+
+| What you see | Meaning |
+|---|---|
+| `Checking college network...` | The extension is testing whether the portal can be reached. This can take a few seconds, longer if the portal is slow or you are on another network. |
+| `ABESEC detected • ACTIVE` | The portal answered, so you are on the college Wi-Fi. Logins will run. |
+| `College Wi-Fi not detected • SLEEP MODE` | The portal did not answer. Automatic logins are skipped until you are back on the college Wi-Fi. |
+
+### Auto Reconnect
+
+```text
+At college (ABESEC)        →  timer fires  →  portal answers  →  login runs
+At home / other network    →  timer fires  →  no answer        →  round skipped
+Back at college            →  next timer fire  →  login runs again, automatically
+```
+
+- The timer keeps running while Auto Reconnect is on. Away from college it does nothing, so no random tabs open.
+- After you switch Auto Reconnect on, the **first automatic login happens after one full interval**. Press **Connect Now** if you want to log in right away.
+- If you are already signed in when the timer fires, the portal simply confirms it. Nothing breaks.
+
+### Connect Now
+
+Use it when your session has just expired, when you do not want to wait for the timer, or while testing your setup. If the college Wi-Fi is not reachable, the popup tells you that automatic login is sleeping.
+
+---
+
+## Updating
+
+Future versions will be published on the Releases page.
+
+1. Download the new ZIP.
+2. **Extract it over the same folder**, replacing the old files.
+3. Open the extensions page and click the **reload** icon (🔄) on the extension card.
+
+Extracting into a *different* folder creates a new extension in the browser's eyes, and you would need to enter your credentials again.
+
+---
+
+## Privacy and security
+
+This project is built so each student uses **their own credentials on their own device**.
+
+- **Where your credentials live:** your username and password are saved in the browser's local extension storage (`chrome.storage.local`) on your own computer. They are **not encrypted** at rest, so anyone who can open your browser profile on your device could read them. Use the extension on **your personal device and profile only**, and never on a shared computer.
+- **Where they are sent:** only to the official ABES portal, when the extension fills in its login form. They are never sent to the author, to GitHub, or to any other server.
+- **The network check:** it is a plain HTTP request to the portal's address. It contains **no credentials**, and the extension does not read the response.
+- **No backend:** no cloud database, no analytics, no accounts, no tracking.
+- **Never commit credentials to GitHub**, and never paste them into an issue.
+
+### Permissions explained
+
+| Permission | Why it is needed |
+|---|---|
+| `storage` | Save your settings locally. |
+| `alarms` | Run the reconnect timer. |
+| `tabs` | Open and close the background login tab, and notice when the portal sends the tab to the college website after login. |
+| `scripting` | Trigger the portal's own login function on the portal page. |
+| `https://192.168.1.254:8090/*` | Run the login automation on the ABES portal page only. |
+| `https://www.abes.ac.in/*` | Recognise the college website that opens after a successful login, so the login tab can be closed. |
+
+---
+
+## Troubleshooting
+
+### The status says SLEEP MODE even though I am on ABESEC
+
+- Make sure the laptop is really connected to **ABESEC**, not a hotspot or a wired network.
+- Open `http://192.168.1.254:8090/` in a normal browser tab. If it does not respond, the portal itself is unreachable at that moment.
+- Reload the extension from the extensions page and open the popup again.
+
+### The status stays on "Checking college network..." for a long time
+
+Away from the college Wi-Fi, the extension waits for two attempts of up to 12 seconds each before giving up, so it can take up to about 25 seconds to show **SLEEP MODE**. This is deliberate: the portal is sometimes slow, and a single failure should not be treated as "not on college Wi-Fi".
+
+### Login works manually but not automatically
+
+1. Open `https://192.168.1.254:8090/` yourself and confirm the username field, the password field and **Sign in** all work.
+2. Check that **Username** and **Password** are saved in the popup (click **Save Settings**).
+3. Press **Connect Now** and watch whether a background tab opens.
+4. If ABES changes the portal's page, the extension may need an update. Please open an issue.
+
+### The portal tab shows "Your connection is not private"
+
+This warning comes from the portal's own HTTPS page, not from the extension. If it appears in the background login tab, the extension cannot continue on that page. A stuck login tab is **closed automatically after 90 seconds**, and the next scheduled attempt starts fresh, so it no longer blocks future logins. You can also press **Connect Now** again.
+
+### Auto Reconnect does not seem to run
+
+Check that:
+
+- **Auto Reconnect** is switched on and you pressed **Save Settings**.
+- **Reconnect every** has a valid value (at least 1 minute).
+- You are on the college Wi-Fi when the timer fires (otherwise that round is skipped on purpose).
+- The popup line "Next login check" shows a future time.
+
+### "Could not load manifest" or "Could not load javascript 'content.js'"
+
+One of the extension's files is missing from the folder you selected. The folder must directly contain all six files listed in [Installation](#installation). Extract the release ZIP again and select the folder that contains `manifest.json`.
+
+### Old errors in the extension's Errors page
+
+The browser keeps old errors until you click **Clear all**. After clearing them, use the extension again and check whether new ones appear.
+
+### Uninstall
+
+Remove the extension from your browser's extensions page. v4.3.0 installs nothing else on your computer.
+
+---
+
+## Project structure
 
 ```text
 ABES-WiFi-AutoLogin/
 │
 ├── extension/
-│   ├── manifest.json
-│   ├── background.js
-│   ├── content.js
-│   ├── popup.html
-│   ├── popup.js
-│   └── popup.css
+│   ├── manifest.json      # Extension configuration and permissions
+│   ├── background.js      # Reconnect timer, network check, login tab handling
+│   ├── content.js         # Fills the portal form and detects a successful login
+│   ├── popup.html         # Popup layout
+│   ├── popup.js           # Popup logic and live status
+│   └── popup.css          # Popup styling
 │
-├── native-host/
-│   ├── main.go
-│   └── go.mod
-│
-├── install.bat
-├── uninstall.bat
-├── .gitignore
-└── README.md
+├── LICENSE                # MIT License
+└── README.md              # This file
 ```
 
-You may see `abes-wifi-helper.exe` after building the helper. That file is generated locally and is intentionally ignored by Git.
-
----
-
-### 3. Run the installer
-
-Double-click:
-
-```text
-install.bat
-```
-
-The installer will:
-
-1. Check whether the native helper already exists.
-2. If it does not exist, check whether Go is installed.
-3. Install Go through **Windows Package Manager (`winget`)** when available.
-4. Build the helper from `native-host\main.go`.
-5. Copy the helper to the local application directory.
-6. Register the Chrome/Brave Native Messaging host.
-7. Verify the installation.
-8. Tell you where to load the extension.
-
-You should see a successful completion message before continuing.
-
-> **If `winget` is unavailable**, install Go from the official Go website and run `install.bat` again.
-
----
-
-### 4. Load the extension in Brave
-
-Open:
-
-```text
-brave://extensions/
-```
-
-Turn on:
-
-**Developer mode**
-
-Then click:
-
-**Load unpacked**
-
-Select:
-
-```text
-ABES-WiFi-AutoLogin/extension
-```
-
-### For Google Chrome
-
-Open:
-
-```text
-chrome://extensions/
-```
-
-The same **Load unpacked** process applies.
-
----
-
-### 5. Configure the extension
-
-Open the extension popup.
-
-You will see options such as:
-
-```text
-College Wi-Fi SSID
-[ ABESEC ]
-
-Detection Mode
-○ Real-Time
-○ Battery Saver
-
-Username
-[ your username ]
-
-Password
-[ your password ]
-
-Auto Reconnect
-[ ON / OFF ]
-
-Reconnect every
-[ value ] [ Minutes / Hours ]
-```
-
-Enter your own college credentials.
-
-**Never share your username or password with the project author or anyone else.**
-
----
-
-# Choosing a detection mode
-
-## Real-Time Mode
-
-Use this when you want the extension to react immediately to Wi-Fi changes.
-
-```mermaid
-flowchart LR
-    A[Windows Wi-Fi] --> B[Native Helper]
-    B --> C{Current SSID}
-    C -->|ABESEC| D[ACTIVE]
-    C -->|Other Wi-Fi| E[SLEEP MODE]
-    D --> F[Reconnect timer enabled]
-    E --> G[Reconnect timer stopped]
-```
-
-The helper waits for Windows WLAN events instead of repeatedly requesting a website.
-
-### Best for
-
-- Desktop PCs
-- Higher-end laptops
-- Users who want immediate Wi-Fi state changes
-
-### Resource behavior
-
-The native helper remains available so it can react to Wi-Fi events. It is **event-driven**, not a constant website/network polling loop.
-
----
-
-## Battery Saver Mode
-
-Use this when you prefer not to keep the native helper running continuously.
-
-```mermaid
-flowchart TD
-    A[Popup opened or timer fires] --> B[Start helper]
-    B --> C[Read current SSID]
-    C --> D{Is SSID ABESEC?}
-    D -->|Yes| E[Continue / login if needed]
-    D -->|No| F[Sleep]
-    E --> G[Helper exits]
-    F --> G
-```
-
-### Best for
-
-- Battery-powered laptops
-- Lower-end devices
-- Users who want the lowest background resource usage
-
----
-
-# Auto Reconnect
-
-You can choose how often the extension should attempt a reconnect check.
-
-For example:
-
-```text
-30 minutes
-1 hour
-1 hour 30 minutes
-2 hours
-3 hours
-```
-
-You can also enter a custom value.
-
-### Important behavior
-
-The timer is only active while the configured college Wi-Fi is connected.
-
-```text
-ABESEC
-  ↓
-Timer ACTIVE
-
-Home Wi-Fi
-  ↓
-Timer STOPPED / Sleep Mode
-
-ABESEC again
-  ↓
-Timer STARTS again
-```
-
-This prevents the extension from trying to open the ABES login portal while you are at home or connected to some other network.
-
----
-
-# Connect Now
-
-**Connect Now** performs an immediate login attempt.
-
-It is useful when:
-
-- Your session has just expired.
-- You do not want to wait for the scheduled timer.
-- You are testing the setup.
-
-The login flow runs in a background tab.
-
-```text
-Connect Now
-    ↓
-ABES Portal
-    ↓
-Fill username
-    ↓
-Fill password
-    ↓
-Sign in
-    ↓
-Authentication successful
-    ↓
-Close login tab
-```
-
----
-
-# Privacy and security
-
-This project is designed so that each student uses **their own credentials on their own device**.
-
-### Credentials
-
-Your username and password are handled locally by the extension.
-
-They are not sent to the project repository or to the project author.
-
-**Never commit your credentials to GitHub.**
-
-### Native helper
-
-The native Windows helper is used for Wi-Fi detection.
-
-Its job is to:
-
-- Read the currently connected Wi-Fi SSID.
-- Communicate that information to the extension through Chrome Native Messaging.
-
-The native helper does **not** need your ABES portal username or password.
-
-### What the project does not need
-
-The project does not need:
-
-- A cloud database
-- Firebase
-- A backend server
-- Your GitHub account
-- Your ABES password sent to the developer
-
----
-
-# Why is there a Windows native helper?
-
-Chrome extensions cannot directly use the normal Windows Wi-Fi APIs to read the current Wi-Fi SSID.
-
-The project therefore uses:
-
-```mermaid
-flowchart LR
-    A[Windows Wi-Fi] --> B[Native Helper]
-    B --> C[Chrome Native Messaging]
-    C --> D[ABES WiFi Auto Login]
-    D --> E[Timer + Auto Login]
-```
-
-The helper is a small Windows component that bridges the gap between Windows networking information and the browser extension.
-
----
-
-# Troubleshooting
-
-## "Specified native messaging host not found"
-
-This usually means the native helper was not registered correctly.
-
-Try:
-
-1. Close Chrome/Brave.
-2. Run `install.bat` again.
-3. Make sure the helper was built successfully.
-4. Reopen the browser.
-5. Reload the extension.
-
-If the installer reports an error, **keep the terminal window open and read the error message**.
-
----
-
-## The extension says Wi-Fi is not detected
-
-Check:
-
-```text
-Current Wi-Fi SSID
-```
-
-Make sure it exactly matches:
-
-```text
-ABESEC
-```
-
-SSID matching is case-sensitive in the current configuration.
-
----
-
-## Auto reconnect does not run
-
-Check all three:
-
-```text
-Auto Reconnect = ON
-```
-
-```text
-Current Wi-Fi = ABESEC
-```
-
-```text
-Reconnect interval = valid value
-```
-
-When you leave `ABESEC`, the timer intentionally stops.
-
----
-
-## Login works manually but not automatically
-
-Open the ABES portal manually and verify that:
-
-```text
-Username field
-Password field
-Sign in
-```
-
-still behave normally.
-
-The extension currently targets the ABES portal at:
-
-```text
-https://192.168.1.254:8090/
-```
-
-If ABES changes the portal's page structure or login mechanism, the extension may need an update.
-
----
-
-# Uninstall
-
-If you want to remove the Windows native helper, run:
-
-```text
-uninstall.bat
-```
-
-Then remove the extension from:
-
-```text
-brave://extensions/
-```
-
-or:
-
-```text
-chrome://extensions/
-```
-
----
-
-# Project architecture
+### Architecture
 
 ```mermaid
 flowchart TB
-    U[User]
-    P[Chrome / Brave Extension]
-    BG[MV3 Background Service Worker]
-    POP[Extension Popup]
-    PORTAL[ABES Captive Portal]
-    TIMER[Reconnect Alarm]
-    NM[Chrome Native Messaging]
-    HELPER[Windows Wi-Fi Helper]
-    WIFI[Windows WLAN APIs]
-
-    U --> POP
-    POP --> BG
-    BG --> TIMER
-    BG --> PORTAL
-    BG --> NM
-    NM --> HELPER
-    HELPER --> WIFI
-    WIFI --> HELPER
-    HELPER --> NM
-    NM --> BG
+    U["User"] --> POP["Popup (popup.html / popup.js)"]
+    POP <-->|"messages"| BG["Background service worker (background.js)"]
+    AL["Reconnect alarm"] --> BG
+    BG <-->|"saves and reads"| ST[("Local extension storage")]
+    BG -->|"HTTP probe"| PORTAL["ABES captive portal"]
+    BG -->|"opens background tab"| TAB["Portal login page (HTTPS)"]
+    CS["Content script (content.js)"] -->|"runs on"| TAB
+    CS -->|"reads credentials"| ST
+    CS -->|"submitLogin / loginSuccess"| BG
 ```
 
 ---
 
-# Project structure
+## Technical details
 
-```text
-ABES-WiFi-AutoLogin/
-│
-├── extension/
-│   ├── manifest.json      # Chrome extension configuration
-│   ├── background.js      # Timers, Wi-Fi state, tabs, Native Messaging
-│   ├── content.js         # Portal login automation
-│   ├── popup.html         # Extension UI
-│   ├── popup.js           # Popup logic
-│   └── popup.css          # Popup styling
-│
-├── native-host/
-│   ├── main.go            # Windows Wi-Fi / Native Messaging helper
-│   └── go.mod             # Go module definition
-│
-├── install.bat            # Build + install helper + register Native Messaging
-├── uninstall.bat          # Remove Native Messaging registration/helper
-├── .gitignore             # Ignores generated binaries and local files
-└── README.md              # Project documentation
-```
+| Setting | Value |
+|---|---|
+| Extension type | Manifest V3 |
+| Portal login URL | `https://192.168.1.254:8090/` |
+| Network check URL | `http://192.168.1.254:8090/` |
+| Network check timeout | 12 seconds per attempt |
+| Attempts before sleep mode | 2 (2 seconds apart) |
+| Result reuse window | 5 seconds |
+| Popup auto re-check | Every 10 seconds, only while the popup is open |
+| Stuck login tab cleanup | After 90 seconds |
+| Default reconnect interval | 2 hours (minimum 1 minute) |
 
 ---
 
-# Open-source project
+## Known limitations
 
-This project is intended as a practical campus utility and an open-source learning project.
-
-It was built around a real problem:
-
-> **Having to manually re-authenticate to college Wi-Fi every 1–2 hours.**
-
-The goal is to make that repetitive process automatic while keeping the setup local and transparent.
-
----
-
-# Important notes
-
-### ABES-specific
-
-This release is intentionally **ABES-specific**.
-
-The default captive portal is:
-
-```text
-https://192.168.1.254:8090/
-```
-
-and the expected college Wi-Fi SSID is:
-
-```text
-ABESEC
-```
-
-A future version may support other colleges and captive portals, but that is not the goal of V4.2.
-
-### Beta status
-
-V4.2 is the stable version currently being shared for testing among ABES students.
-
-It works with the tested ABES setup, but different Windows systems, browser versions, antivirus products, or future portal changes may behave differently.
+- **ABES-specific.** The portal address is built in. Other colleges would need code changes.
+- **Credentials are stored unencrypted** in the browser profile (see [Privacy and security](#privacy-and-security)).
+- **Detection is based on reachability**, not on the Wi-Fi name. A different network that happens to answer on `192.168.1.254:8090` would also count as the college network.
+- **The Wi-Fi SSID field is informational** in this version.
+- **Chromium browsers only.**
+- **macOS and Linux are untested.** Reports are welcome.
+- If ABES changes its portal, the extension may need an update.
 
 ---
 
-# Contributing
+## Contributing
 
-Found a bug?
+Found a bug or tested it on macOS or Linux? Please open a GitHub Issue and include:
 
-You can:
+1. Your operating system and version.
+2. Your browser (Chrome, Brave, Edge) and version.
+3. The extension version (shown on the extensions page).
+4. What you expected and what happened, plus the exact error text.
 
-1. Open a GitHub Issue.
-2. Describe your Windows version.
-3. Mention whether you use Chrome or Brave.
-4. Mention whether you use Real-Time or Battery Saver mode.
-5. Include the exact error message.
-
-**Never include your Wi-Fi username, password, or other private credentials in an issue.**
+**Never include your username, password or any other private credential in an issue.**
 
 Pull requests are welcome.
 
 ---
 
-# License
+## License
 
-MIT License
-
-See [`LICENSE`](LICENSE) for details.
+MIT License. See [`LICENSE`](LICENSE) for details.
 
 ---
 

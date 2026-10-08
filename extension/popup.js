@@ -1,8 +1,6 @@
 const targetSSIDInput = document.getElementById("targetSSID");
 const usernameInput = document.getElementById("username");
 const passwordInput = document.getElementById("password");
-const realtimeMode = document.getElementById("realtimeMode");
-const batteryMode = document.getElementById("batteryMode");
 const autoReconnect = document.getElementById("autoReconnect");
 const intervalValue = document.getElementById("intervalValue");
 const intervalUnit = document.getElementById("intervalUnit");
@@ -15,18 +13,22 @@ const nextRun = document.getElementById("nextRun");
 const ALARM_NAME = "abes-wifi-reconnect";
 
 async function loadSettings() {
-  const data = await chrome.runtime.sendMessage({ type: "requestWifiStatus" });
+  // Settings are read straight from storage, so the form fills instantly
+  // even if the college portal check takes a while to finish.
+  const data = await chrome.storage.local.get([
+    "targetSSID",
+    "username",
+    "password",
+    "autoReconnect",
+    "intervalMinutes"
+  ]);
 
-  targetSSIDInput.value = data?.targetSSID || "ABESEC";
-  usernameInput.value = data?.username || "";
-  passwordInput.value = data?.password || "";
-  autoReconnect.checked = Boolean(data?.autoReconnect);
+  targetSSIDInput.value = data.targetSSID || "ABESEC";
+  usernameInput.value = data.username || "";
+  passwordInput.value = data.password || "";
+  autoReconnect.checked = Boolean(data.autoReconnect);
 
-  const mode = data?.detectionMode === "realtime" ? "realtime" : "battery";
-  realtimeMode.checked = mode === "realtime";
-  batteryMode.checked = mode === "battery";
-
-  const minutes = Number(data?.intervalMinutes) || 120;
+  const minutes = Number(data.intervalMinutes) || 120;
   if (minutes % 60 === 0) {
     intervalUnit.value = "hours";
     intervalValue.value = minutes / 60;
@@ -35,28 +37,42 @@ async function loadSettings() {
     intervalValue.value = minutes;
   }
 
-  updateNetworkStatus(Boolean(data?.wifiActive), data?.wifiSSID || "", data?.error || "");
+  await refreshNextRun();
+
+  showChecking();
+  await refreshWifiStatus("requestWifiStatus");
   await refreshNextRun();
 }
 
-function selectedMode() {
-  return realtimeMode.checked ? "realtime" : "battery";
+async function refreshWifiStatus(messageType) {
+  try {
+    const state = await chrome.runtime.sendMessage({ type: messageType });
+    updateNetworkStatus(Boolean(state?.wifiActive), state?.wifiSSID || "", state?.error || "");
+  } catch (error) {
+    console.error("ABES Auto Login: Wi-Fi status request failed", error);
+    updateNetworkStatus(false, "", "unavailable");
+  }
+}
+
+function showChecking() {
+  networkStatus.textContent = "Checking college network...";
+  networkStatus.className = "network-status checking";
 }
 
 function updateNetworkStatus(active, ssid, error = "") {
   const target = targetSSIDInput.value.trim() || "ABESEC";
 
   if (active) {
-    networkStatus.textContent = `● ${ssid || target} detected • ACTIVE`;
+    networkStatus.textContent = `${ssid || target} detected • ACTIVE`;
     networkStatus.className = "network-status active";
   } else if (ssid) {
-    networkStatus.textContent = `○ ${ssid} • SLEEP MODE`;
+    networkStatus.textContent = `${ssid} • SLEEP MODE`;
     networkStatus.className = "network-status sleeping";
   } else if (error) {
-    networkStatus.textContent = "○ Wi-Fi status unavailable • SLEEP MODE";
+    networkStatus.textContent = "Wi-Fi status unavailable • SLEEP MODE";
     networkStatus.className = "network-status sleeping";
   } else {
-    networkStatus.textContent = "○ College Wi-Fi not detected • SLEEP MODE";
+    networkStatus.textContent = "College Wi-Fi not detected • SLEEP MODE";
     networkStatus.className = "network-status sleeping";
   }
 }
@@ -68,7 +84,7 @@ function getIntervalMinutes() {
   return minutes >= 1 ? minutes : null;
 }
 
-async function saveSettings(showMessage = true) {
+async function saveSettings(showMessage = true, message = "Settings saved.") {
   const targetSSID = targetSSIDInput.value.trim();
   const username = usernameInput.value.trim();
   const password = passwordInput.value;
@@ -91,17 +107,17 @@ async function saveSettings(showMessage = true) {
     targetSSID,
     username,
     password,
-    detectionMode: selectedMode(),
     autoReconnect: autoReconnect.checked,
     intervalMinutes
   });
 
-  const state = await chrome.runtime.sendMessage({ type: "settingsChanged" });
-  if (state) updateNetworkStatus(Boolean(state.wifiActive), state.wifiSSID || "", state.error || "");
+  // Confirm right away; the network re-check below can take a few seconds.
+  if (showMessage) showStatus(message);
 
+  showChecking();
+  await refreshWifiStatus("settingsChanged");
   await refreshNextRun();
 
-  if (showMessage) showStatus("Settings saved.");
   return true;
 }
 
@@ -123,41 +139,12 @@ async function refreshNextRun() {
 
 saveButton.addEventListener("click", () => saveSettings(true));
 
-[realtimeMode, batteryMode].forEach((element) => {
-  element.addEventListener("change", async () => {
-    const mode = selectedMode();
-
-    try {
-      const result = await chrome.runtime.sendMessage({
-        type: "setDetectionMode",
-        mode
-      });
-
-      if (result) {
-        updateNetworkStatus(Boolean(result.wifiActive), result.wifiSSID || "", result.error || "");
-      }
-
-      showStatus(
-        mode === "realtime"
-          ? "Real-Time mode enabled."
-          : "Battery Saver mode enabled."
-      );
-      await refreshNextRun();
-    } catch (error) {
-      console.error("ABES Auto Login: Mode update failed", error);
-      showStatus("Could not change detection mode.", true);
-    }
-  });
+autoReconnect.addEventListener("change", () => {
+  saveSettings(true, "Auto reconnect updated.");
 });
 
-autoReconnect.addEventListener("change", async () => {
-  const ok = await saveSettings(false);
-  if (ok) showStatus("Auto reconnect updated.");
-});
-
-targetSSIDInput.addEventListener("change", async () => {
-  const ok = await saveSettings(false);
-  if (ok) showStatus("SSID updated.");
+targetSSIDInput.addEventListener("change", () => {
+  saveSettings(true, "SSID updated.");
 });
 
 connectButton.addEventListener("click", async () => {
@@ -180,6 +167,24 @@ chrome.storage.onChanged.addListener((changes) => {
     });
   }
 });
+
+// While the popup is open, re-check the network by itself so switching Wi-Fi
+// updates the status without reopening the popup. Nothing runs once it closes.
+let statusRefreshing = false;
+
+async function silentStatusRefresh() {
+  if (statusRefreshing) return;
+  statusRefreshing = true;
+  try {
+    await refreshWifiStatus("requestWifiStatus");
+  } finally {
+    statusRefreshing = false;
+  }
+}
+
+window.addEventListener("online", silentStatusRefresh);
+window.addEventListener("offline", silentStatusRefresh);
+setInterval(silentStatusRefresh, 10000);
 
 loadSettings();
 setInterval(refreshNextRun, 1000);
