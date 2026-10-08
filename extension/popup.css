@@ -1,111 +1,199 @@
+:root {
+  --bg: #0e141b;
+  --surface: #151d27;
+  --field: #0f1620;
+  --line: #263444;
+  --text: #e9eff5;
+  --muted: #8c9db0;
+  --accent: #4cc3d9;
+  --accent-ink: #062229;
+  --ok: #5fd38d;
+  --err: #f09a9a;
+}
+
+* {
+  box-sizing: border-box;
+}
+
 body {
   margin: 0;
-  min-width: 350px;
-  background: #111827;
-  color: #f9fafb;
-  font-family: Arial, sans-serif;
+  min-width: 360px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
+  font-size: 13px;
+  line-height: 1.4;
 }
 
 .container {
-  padding: 18px;
+  padding: 16px;
+}
+
+.header {
+  margin-bottom: 14px;
 }
 
 h1 {
-  margin: 0 0 16px;
-  font-size: 18px;
-  text-align: center;
+  margin: 0 0 10px;
+  font-size: 17px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+/* Wi-Fi status bar. JS only swaps the class: active / sleeping / checking */
+.network-status {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.network-status::before {
+  content: "";
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.network-status.active {
+  border-color: #245238;
+  background: #12261c;
+  color: var(--ok);
+}
+
+.network-status.sleeping {
+  color: var(--muted);
+}
+
+.network-status.sleeping::before {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px currentColor;
+}
+
+.network-status.checking::before {
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  50% {
+    opacity: 0.25;
+  }
+}
+
+.card {
+  margin-bottom: 12px;
+  padding: 4px 14px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.field {
+  margin-top: 12px;
 }
 
 label {
   display: block;
-  margin: 10px 0 6px;
-  font-size: 13px;
+  margin-bottom: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
 }
 
 input,
 select {
-  box-sizing: border-box;
-  padding: 9px 10px;
-  border: 1px solid #374151;
-  border-radius: 7px;
-  background: #1f2937;
-  color: #fff;
-  outline: none;
-}
-
-input[type="text"],
-input[type="password"],
-input[type="number"] {
   width: 100%;
-}
-
-.network-status {
-  padding: 10px 12px;
+  padding: 9px 11px;
+  border: 1px solid var(--line);
   border-radius: 7px;
-  font-size: 12px;
-  font-weight: 700;
-  text-align: center;
-  margin-bottom: 12px;
+  background: var(--field);
+  color: var(--text);
+  font: inherit;
+  outline: none;
+  transition: border-color 0.15s;
 }
 
-.network-status.active {
-  background: #173d24;
-  color: #86efac;
+input::placeholder {
+  color: #5d6e80;
 }
 
-.network-status.sleeping {
-  background: #374151;
-  color: #d1d5db;
-}
-
-.mode-card {
-  border: 1px solid #374151;
-  border-radius: 8px;
-  padding: 4px 10px;
-}
-
-.mode-option {
-  display: flex;
-  align-items: flex-start;
-  gap: 9px;
-  margin: 10px 0;
-}
-
-.mode-option input {
-  margin-top: 3px;
-  flex: 0 0 auto;
-}
-
-.mode-option span {
-  display: block;
-}
-
-.mode-option strong,
-.mode-option small {
-  display: block;
-}
-
-.mode-option small {
-  margin-top: 3px;
-  color: #cbd5e1;
-  line-height: 1.3;
+input:focus-visible,
+select:focus-visible {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(76, 195, 217, 0.18);
 }
 
 .row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-top: 13px;
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.row-text {
+  min-width: 0;
 }
 
 .switch-label {
   margin: 0;
-  font-weight: 700;
+  color: var(--text);
+  font-size: 13px;
 }
 
-#autoReconnect {
-  width: 18px;
-  height: 18px;
+.hint {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+/* Checkbox drawn as a toggle switch (still the same #autoReconnect checkbox) */
+input.switch {
+  appearance: none;
+  -webkit-appearance: none;
+  position: relative;
+  flex: 0 0 auto;
+  width: 40px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: #2a3a4c;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+input.switch::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform 0.15s;
+}
+
+input.switch:checked {
+  background: var(--accent);
+}
+
+input.switch:checked::after {
+  transform: translateX(18px);
+}
+
+input.switch:focus-visible {
+  box-shadow: 0 0 0 3px rgba(76, 195, 217, 0.35);
 }
 
 .interval-row {
@@ -114,42 +202,70 @@ input[type="number"] {
   gap: 8px;
 }
 
-button {
-  width: 100%;
-  margin-top: 12px;
-  padding: 10px;
-  border: 0;
-  border-radius: 7px;
-  cursor: pointer;
-  font-weight: 700;
+.actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
 }
 
-#save {
-  background: #374151;
-  color: #fff;
+button {
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-weight: 650;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+button:hover {
+  background: #1b2633;
+}
+
+button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 #connect {
-  background: #2f9e24;
-  color: #fff;
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+#connect:hover {
+  background: #6dd0e3;
 }
 
 #nextRun,
 #status {
-  min-height: 16px;
-  margin: 10px 0 0;
+  margin: 12px 0 0;
   font-size: 12px;
   text-align: center;
 }
 
 #nextRun {
-  color: #cbd5e1;
+  color: var(--muted);
+}
+
+#status {
+  min-height: 16px;
+  margin-top: 6px;
 }
 
 .success {
-  color: #86efac;
+  color: var(--ok);
 }
 
 .error {
-  color: #fca5a5;
+  color: var(--err);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation: none !important;
+    transition: none !important;
+  }
 }

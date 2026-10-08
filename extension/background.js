@@ -1,26 +1,33 @@
 let activeLoginTabId = null;
+let activeLoginStartedAt = 0;
 const loginTabIds = new Set();
-let nativePort = null;
-let nativeReconnectTimer = null;
-const pendingWifiRequests = [];
 
 const ALARM_NAME = "abes-wifi-reconnect";
-const NATIVE_HOST = "com.abes.wifi.autologin";
 const DEFAULT_TARGET_SSID = "ABESEC";
 const DEFAULT_INTERVAL_MINUTES = 120;
-const DEFAULT_MODE = "battery";
+
+// The login page itself is opened over HTTPS (as in v4.2).
+const PORTAL_LOGIN_URL = "https://192.168.1.254:8090/";
+
+// Network detection uses plain HTTP: it needs no certificate, so a reply from
+// the portal is enough to know we are on the college network.
+const PORTAL_PROBE_URL = "http://192.168.1.254:8090/";
+const PROBE_TIMEOUT_MS = 12000; // the portal can be slow, so wait long
+const PROBE_ATTEMPTS = 2;       // "not on college Wi-Fi" only after every attempt fails
+const PROBE_RETRY_DELAY_MS = 2000;
+const STATUS_CACHE_MS = 5000;   // reuse a fresh result (popup + Connect Now back to back)
+const STALE_LOGIN_TAB_MS = 90000;
 
 chrome.runtime.onInstalled.addListener(async () => {
   await ensureDefaults();
-  await configureDetectionMode();
+  await chrome.storage.local.remove("detectionMode"); // old v4.2 setting
+  await applySchedule(false);
 });
 
 chrome.runtime.onStartup.addListener(async () => {
   await ensureDefaults();
-  await configureDetectionMode();
-  await requestFreshWifiStatus();
+  await applySchedule(false);
 });
-
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const senderUrl = sender.url || "";
@@ -30,6 +37,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     sendResponse({ ok: false, message: "Untrusted message source." });
     return false;
   }
+
   if (message.type === "connectNow") {
     connectNow().then(sendResponse);
     return true;
@@ -40,13 +48,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
-  if (message.type === "setDetectionMode") {
-    setDetectionMode(message.mode).then(sendResponse);
-    return true;
-  }
-
   if (message.type === "requestWifiStatus") {
-    getExtensionState().then(sendResponse);
+    checkCollegeNetwork().then(sendResponse);
     return true;
   }
 
@@ -65,12 +68,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm.name !== ALARM_NAME) return;
 
-  const state = await requestFreshWifiStatus();
-  if (state.wifiActive) {
-    await startLogin(false);
-  } else {
-    await chrome.alarms.clear(ALARM_NAME);
-  }
+  // The timer keeps running everywhere. Away from college Wi-Fi this tick is
+  // simply skipped, and login resumes by itself once the portal is reachable.
+  const state = await checkCollegeNetwork();
+  if (state.wifiActive) await startLogin(false);
 });
 
 chrome.tabs.onCreated.addListener((tab) => {
@@ -99,8 +100,7 @@ async function ensureDefaults() {
     "username",
     "password",
     "autoReconnect",
-    "intervalMinutes",
-    "detectionMode"
+    "intervalMinutes"
   ]);
 
   await chrome.storage.local.set({
@@ -109,284 +109,73 @@ async function ensureDefaults() {
     password: data.password || "",
     autoReconnect: Boolean(data.autoReconnect),
     intervalMinutes:
-      Number(data.intervalMinutes) > 0 ? Number(data.intervalMinutes) : DEFAULT_INTERVAL_MINUTES,
-    detectionMode:
-      data.detectionMode === "realtime" || data.detectionMode === "battery"
-        ? data.detectionMode
-        : DEFAULT_MODE
+      Number(data.intervalMinutes) > 0 ? Number(data.intervalMinutes) : DEFAULT_INTERVAL_MINUTES
   });
 }
 
-async function configureDetectionMode() {
-  const { detectionMode = DEFAULT_MODE } =
-    await chrome.storage.local.get(["detectionMode"]);
+/* ---------- College network detection ---------- */
 
-  if (detectionMode === "realtime") {
-    await ensurePersistentNativeConnection();
-  } else {
-    disconnectPersistentNative();
-  }
-
-  return requestFreshWifiStatus();
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function ensurePersistentNativeConnection() {
-  if (nativePort) return true;
-  if (nativeReconnectTimer) return false;
+async function probePortalOnce() {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS);
 
   try {
-    nativePort = chrome.runtime.connectNative(NATIVE_HOST);
-
-    nativePort.onMessage.addListener((message) => {
-      if (message?.type === "wifiStatus") processWifiStatus(message);
+    // no-cors: we only care that the portal answered, not about its content.
+    // (Do not add redirect: "manual" here, browsers reject it with no-cors.)
+    await fetch(PORTAL_PROBE_URL, {
+      mode: "no-cors",
+      cache: "no-store",
+      signal: controller.signal
     });
-
-    nativePort.onDisconnect.addListener(async () => {
-      nativePort = null;
-
-      // Fail safe: never keep an old ACTIVE state after the native helper dies.
-      await setWifiState(false, "");
-
-      while (pendingWifiRequests.length) {
-        pendingWifiRequests.shift().resolve({
-          wifiActive: false,
-          wifiSSID: "",
-          error: "Wi-Fi helper disconnected"
-        });
-      }
-
-      const { detectionMode = DEFAULT_MODE } =
-        await chrome.storage.local.get(["detectionMode"]);
-
-      if (detectionMode === "realtime") scheduleNativeReconnect();
-    });
-
-    const { targetSSID = DEFAULT_TARGET_SSID } =
-      await chrome.storage.local.get(["targetSSID"]);
-
-    nativePort.postMessage({
-      command: "startWatch",
-      targetSSID
-    });
-
     return true;
-  } catch (error) {
-    console.error("ABES Auto Login: Native connection failed", error);
-    nativePort = null;
-    scheduleNativeReconnect();
+  } catch {
     return false;
+  } finally {
+    clearTimeout(timer);
   }
 }
 
-function disconnectPersistentNative() {
-  if (nativeReconnectTimer) {
-    clearTimeout(nativeReconnectTimer);
-    nativeReconnectTimer = null;
+let statusInFlight = null;
+let statusCache = null;
+
+function checkCollegeNetwork() {
+  if (statusCache && Date.now() - statusCache.at < STATUS_CACHE_MS) {
+    return Promise.resolve(statusCache.state);
   }
+  if (statusInFlight) return statusInFlight;
 
-  if (nativePort) {
-    try {
-      nativePort.disconnect();
-    } catch {
-      // Already disconnected.
-    }
-    nativePort = null;
-  }
+  statusInFlight = (async () => {
+    let active = false;
 
-  while (pendingWifiRequests.length) {
-    pendingWifiRequests.shift().resolve(getStoredWifiState());
-  }
-}
-
-function scheduleNativeReconnect() {
-  if (nativeReconnectTimer) return;
-
-  nativeReconnectTimer = setTimeout(async () => {
-    nativeReconnectTimer = null;
-    const { detectionMode = DEFAULT_MODE } =
-      await chrome.storage.local.get(["detectionMode"]);
-    if (detectionMode === "realtime") await ensurePersistentNativeConnection();
-  }, 3000);
-}
-
-async function getExtensionState() {
-  const settings = await chrome.storage.local.get([
-    "targetSSID",
-    "username",
-    "password",
-    "detectionMode",
-    "autoReconnect",
-    "intervalMinutes"
-  ]);
-
-  const fresh = await requestFreshWifiStatus();
-
-  return {
-    ...settings,
-    detectionMode: settings.detectionMode === "realtime" ? "realtime" : "battery",
-    wifiActive: Boolean(fresh.wifiActive),
-    wifiSSID: fresh.wifiSSID || ""
-  };
-}
-
-async function requestFreshWifiStatus() {
-  const {
-    detectionMode = DEFAULT_MODE,
-    targetSSID = DEFAULT_TARGET_SSID
-  } = await chrome.storage.local.get(["detectionMode", "targetSSID"]);
-
-  if (detectionMode === "realtime") {
-    const connected = await ensurePersistentNativeConnection();
-    if (!connected || !nativePort) {
-      return { wifiActive: false, wifiSSID: "", error: "Wi-Fi helper unavailable" };
+    for (let attempt = 0; attempt < PROBE_ATTEMPTS && !active; attempt++) {
+      if (attempt > 0) await sleep(PROBE_RETRY_DELAY_MS);
+      active = await probePortalOnce();
     }
 
-    return new Promise((resolve) => {
-      const pending = { resolve };
-      pendingWifiRequests.push(pending);
-
-      try {
-        nativePort.postMessage({
-          command: "getStatus",
-          targetSSID
-        });
-      } catch {
-        const index = pendingWifiRequests.indexOf(pending);
-        if (index >= 0) pendingWifiRequests.splice(index, 1);
-        resolve({ wifiActive: false, wifiSSID: "", error: "Wi-Fi helper unavailable" });
-        return;
-      }
-
-      setTimeout(async () => {
-        const index = pendingWifiRequests.indexOf(pending);
-        if (index >= 0) {
-          pendingWifiRequests.splice(index, 1);
-          resolve({ wifiActive: false, wifiSSID: "", error: "Wi-Fi status request timed out" });
-        }
-      }, 2500);
-    });
-  }
-
-  try {
-    const message = await chrome.runtime.sendNativeMessage(NATIVE_HOST, {
-      command: "getStatusOnce",
-      targetSSID
-    });
-
-    if (message?.type === "wifiStatus") {
-      await processWifiStatus(message);
-      return {
-        wifiActive: Boolean(message.active),
-        wifiSSID: message.ssid || ""
-      };
-    }
-  } catch (error) {
-    console.error("ABES Auto Login: One-shot Wi-Fi check failed", error);
-    return { wifiActive: false, wifiSSID: "", error: "Wi-Fi helper unavailable" };
-  }
-
-  return { wifiActive: false, wifiSSID: "", error: "Wi-Fi status unavailable" };
-}
-
-async function setWifiState(wifiActive, wifiSSID) {
-  const previous = await chrome.storage.local.get(["wifiActive"]);
-  await chrome.storage.local.set({
-    wifiActive: Boolean(wifiActive),
-    wifiSSID: wifiSSID || ""
+    // wifiSSID stays empty: the popup then shows the SSID typed in settings.
+    const state = { wifiActive: active, wifiSSID: "" };
+    await chrome.storage.local.set(state);
+    statusCache = { at: Date.now(), state };
+    return state;
+  })().finally(() => {
+    statusInFlight = null;
   });
-  await syncSchedule(Boolean(wifiActive), Boolean(previous.wifiActive));
+
+  return statusInFlight;
 }
 
-async function processWifiStatus(message) {
-  const wifiActive = Boolean(message.active);
-  const wifiSSID = message.ssid || "";
+/* ---------- Schedule ---------- */
 
-  await setWifiState(wifiActive, wifiSSID);
-
-  while (pendingWifiRequests.length) {
-    pendingWifiRequests.shift().resolve({
-      wifiActive,
-      wifiSSID
-    });
-  }
-}
-
-async function getStoredWifiState() {
-  const data = await chrome.storage.local.get(["wifiActive", "wifiSSID"]);
-  return {
-    wifiActive: Boolean(data.wifiActive),
-    wifiSSID: data.wifiSSID || ""
-  };
-}
-
-async function setDetectionMode(mode) {
-  const normalized = mode === "realtime" ? "realtime" : "battery";
-
-  // Persist first. The storage change listener also reinforces this state
-  // if the service worker is later restarted.
-  await chrome.storage.local.set({ detectionMode: normalized });
-  await configureDetectionMode();
-
-  return requestFreshWifiStatus();
-}
-
-async function handleSettingsChanged() {
-  await ensureDefaults();
-
-  const { detectionMode = DEFAULT_MODE, targetSSID = DEFAULT_TARGET_SSID } =
-    await chrome.storage.local.get(["detectionMode", "targetSSID"]);
-
-  if (detectionMode === "realtime") {
-    await ensurePersistentNativeConnection();
-    if (nativePort) {
-      try {
-        nativePort.postMessage({
-          command: "setTargetSSID",
-          targetSSID
-        });
-      } catch {
-        // Reconnect handler will repair the port if needed.
-      }
-    }
-  } else {
-    disconnectPersistentNative();
-  }
-
-  const state = await requestFreshWifiStatus();
-  await applyScheduleFromCurrentState(true);
-  return state;
-}
-
-async function syncSchedule(wifiActive, previousActive) {
+async function applySchedule(resetTimer) {
   const { autoReconnect, intervalMinutes } =
     await chrome.storage.local.get(["autoReconnect", "intervalMinutes"]);
   const mins = Number(intervalMinutes);
 
-  if (!autoReconnect || !Number.isFinite(mins) || mins <= 0 || !wifiActive) {
-    await chrome.alarms.clear(ALARM_NAME);
-    return;
-  }
-
-  const existing = await chrome.alarms.get(ALARM_NAME);
-  const connectionBecameActive = wifiActive && !previousActive;
-
-  if (connectionBecameActive || !existing) {
-    await chrome.alarms.clear(ALARM_NAME);
-    await chrome.alarms.create(ALARM_NAME, {
-      delayInMinutes: mins,
-      periodInMinutes: mins,
-      persistAcrossSessions: true
-    });
-  }
-}
-
-async function applyScheduleFromCurrentState(resetTimer) {
-  const state = await getStoredWifiState();
-  const { autoReconnect, intervalMinutes } =
-    await chrome.storage.local.get(["autoReconnect", "intervalMinutes"]);
-  const mins = Number(intervalMinutes);
-
-  if (!autoReconnect || !state.wifiActive || !Number.isFinite(mins) || mins <= 0) {
+  if (!autoReconnect || !Number.isFinite(mins) || mins <= 0) {
     await chrome.alarms.clear(ALARM_NAME);
     return;
   }
@@ -404,12 +193,20 @@ async function applyScheduleFromCurrentState(resetTimer) {
 }
 
 async function resetNextAlarm() {
-  await applyScheduleFromCurrentState(true);
+  await applySchedule(true);
   return true;
 }
 
+async function handleSettingsChanged() {
+  await ensureDefaults();
+  await applySchedule(true); // quick, so the popup can show the next run right away
+  return checkCollegeNetwork();
+}
+
+/* ---------- Login ---------- */
+
 async function connectNow() {
-  const state = await requestFreshWifiStatus();
+  const state = await checkCollegeNetwork();
 
   if (!state.wifiActive) {
     return {
@@ -431,17 +228,31 @@ async function startLogin(manual) {
   if (activeLoginTabId !== null) {
     try {
       await chrome.tabs.get(activeLoginTabId);
-      return;
+
+      // A recent login tab is still working: do not open a second one.
+      if (Date.now() - activeLoginStartedAt < STALE_LOGIN_TAB_MS) return;
+
+      // An old login tab never finished (for example a certificate warning
+      // page). Close it so it cannot block every later login.
+      try {
+        await chrome.tabs.remove(activeLoginTabId);
+      } catch {
+        // Already closed.
+      }
     } catch {
-      activeLoginTabId = null;
+      // Tab no longer exists.
     }
+
+    loginTabIds.delete(activeLoginTabId);
+    activeLoginTabId = null;
   }
 
   const tab = await chrome.tabs.create({
-    url: "https://192.168.1.254:8090/",
+    url: PORTAL_LOGIN_URL,
     active: false
   });
   activeLoginTabId = tab.id;
+  activeLoginStartedAt = Date.now();
   loginTabIds.add(tab.id);
 
   if (manual) console.log("ABES Auto Login: manual login started");
